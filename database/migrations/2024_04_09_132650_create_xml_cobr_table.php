@@ -15,7 +15,7 @@ return new class extends Migration
 
         Schema::create('xml_cobr', function (Blueprint $table) {
             $table->id();
-            $table->bigInteger('nfat');
+            $table->bigInteger('n_fat');
             $table->float('v_orig');
             $table->float('v_liq');
             $table->date('d_venc');

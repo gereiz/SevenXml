@@ -120,7 +120,9 @@ class PedidoService
             'Content-Type' => 'application/json'
         ])->put($this->url .  '/Pedido'.'/'.$pedido, [
             "pedi_data_fatura" => $data_fatura,
-            "pedi_nf" => $numero_nf
+            "pedi_nf" => $numero_nf,
+            "pedi_pest_id" => 5
+
 
         ]);
     }
@@ -132,8 +134,15 @@ class PedidoService
 
         $produtos = $pedido_sv['produtos'];
 
-        $unidade_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['uCom'];
-        $valor_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['vUnCom'];
+        if(count(session('xmlArray')['NFe']['infNFe']['det']) > 3) {
+            $unidade_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['uCom'];
+            $valor_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['vUnCom'];
+        } else {
+            $unidade_compra = session('xmlArray')['NFe']['infNFe']['det']['prod']['uCom'];
+            $valor_compra = session('xmlArray')['NFe']['infNFe']['det']['prod']['vUnCom'];
+        }
+
+
 
         $xml_produtos = (session('xmlArray')['NFe']['infNFe']['det']);
 
@@ -162,19 +171,49 @@ class PedidoService
             // Percorre o array de produtos do pedido e verifica se o código do produto do XML é igual ao código do produto do pedido
             foreach($produtos as $prod) {
                 if($ref_produto == $prod['referencia']) {
-                    foreach($xml_produtos as $xml_produto) {
-                        if($xml_produto['prod']['cProd'] == $ref_produto) {
-                            $unidade_compra = $xml_produto['prod']['uCom'];
-                            $valor_compra = $xml_produto['prod']['vUnCom'];
 
-                            if(strlen($unidade_compra) > 2) {
-                                $unidade_compra = substr($unidade_compra, 2);
-                                $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
-                            } else {
-                                $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
-                                $vlr_produto = substr($vlr_produto, 3);
+                    if(count($xml_produtos) > 3) {
+                        foreach($xml_produtos as $xml_produto) {
+                            if($xml_produto['prod']['cProd'] == $ref_produto) {
+                                $unidade_compra = $xml_produto['prod']['uCom'];
+                                $valor_compra = $xml_produto['prod']['vUnCom'];
+
+
+
+                                if(strlen($unidade_compra) > 2) {
+                                    $unidade_compra = substr($unidade_compra, 2);
+                                    $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
+                                } else {
+                                    $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
+                                    $vlr_produto = substr($vlr_produto, 3);
+                                }
                             }
                         }
+
+                    } else {
+                        $primeira_execucao = true; // Variável de controle para a primeira execução
+
+                        foreach($xml_produtos as $xml_produto) {
+                            if ($primeira_execucao) {
+                                $primeira_execucao = false; // Define como falso após a primeira execução
+                                continue; // Pula a iteração atual
+                            }
+
+                            if ($xml_produto['cProd'] == $ref_produto) {
+                                $unidade_compra = $xml_produto['uCom'];
+                                $valor_compra = $xml_produto['vUnCom'];
+
+                                if (strlen($unidade_compra) > 2) {
+                                    $unidade_compra = substr($unidade_compra, 2);
+                                    $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
+                                } else {
+                                    $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
+                                    $vlr_produto = substr($vlr_produto, 3);
+                                }
+                            }
+                            break; // Encerra o loop após a primeira exec
+                        }
+
                     }
 
                     // Transforma o IPI do produto do XML em float, caso exista
@@ -187,9 +226,9 @@ class PedidoService
                     $response = HTTP::withHeaders([
                         'Token' => $this->api_key,
                         'Content-Type' => 'application/json'
-                    ])->put($this->url . '/PedidoItem'.'/'. $prod['item'], [
+                    ])->put($this->url . '/PedidoItem'.'/'. $prod['item'], [ // Atualiza a quantidade do item
                         "peit_preco" => floatval($vlr_produto),
-                        // "peit_qtde" => intval($produto['xml_prod_qtde']),
+                        "peit_qtde" => intval($produto['xml_prod_qtde']),
                         // "peit_ipi" => floatval($ipi_produto)
                     ]);
                 }
@@ -311,8 +350,12 @@ class PedidoService
             array_pop($datas_condicao);
             array_push($datas_condicao, $data_final);
 
-            // adiciona duplicatas multiplidas pelo fator multiplicador
             if($fator_mult <= 2) {
+                $fator = 1;
+                $valor_faturado = $valor_faturado*0.7;
+                $valor_total_produtos = $valor_total_produtos*0.7;
+
+               // adiciona duplicatas multiplidas pelo fator multiplicador
                 for($i = 0; $i < $fator_mult; $i++) {
 
                     // soma a quantidade de dias da condição de pagamento com a data da duplicata

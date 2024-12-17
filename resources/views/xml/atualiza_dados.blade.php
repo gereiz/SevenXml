@@ -199,17 +199,19 @@
                                                         </label>
                                                         <input type="text" value="{{$produto['nome']}}" id="sv_prod_nome"class="form-input input-form sv_prod" disabled>
                                                     </div>
+
+                                                    <div class="flex flex-col w-full mb-4">
+                                                        <label for="sv_prod_id" class="inline-block text-base font-medium">
+                                                            Cód do Produto
+                                                            <span class="text-green-500">*</span>
+                                                        </label>
+                                                        <input type="text" value="{{$produto['referencia']}}" id="sv_prod_id" class="form-input input-form sv_prod" disabled>
+                                                    </div>
+
                                                 @endif
 
                                             @endforeach
 
-                                            <div class="flex flex-col w-full mb-4">
-                                                <label for="sv_prod_id" class="inline-block text-base font-medium">
-                                                    Cód do Produto
-                                                    <span class="text-green-500">*</span>
-                                                </label>
-                                                <input type="text" value="{{$item->peit_prod_id}}" id="sv_prod_id" class="form-input input-form sv_prod" disabled>
-                                            </div>
 
                                             <div class="flex flex-col w-full mb-4">
                                                 <label for="sv_prod_preco" class="inline-block text-base font-medium">

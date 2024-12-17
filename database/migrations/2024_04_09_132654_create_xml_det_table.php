@@ -19,7 +19,6 @@ return new class extends Migration
             $table->string('produto');
             $table->string('u_comp', 5);
             $table->smallInteger('q_comp');
-            $table->bigInteger('column_6');
             $table->float('v_un_comp');
             $table->float('v_prod');
             $table->string('u_trib', 5);

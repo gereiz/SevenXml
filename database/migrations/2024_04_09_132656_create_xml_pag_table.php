@@ -15,7 +15,7 @@ return new class extends Migration
 
         Schema::create('xml_pag', function (Blueprint $table) {
             $table->id();
-            $table->float('v-pag');
+            $table->float('v_pag');
             $table->unsignedBigInteger('id_nf');
             $table->foreign('id_nf')->references('id')->on('xml_ide');
         });

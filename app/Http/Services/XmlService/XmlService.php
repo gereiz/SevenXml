@@ -180,6 +180,7 @@ class XmlService
 
     public function saveXmlTotal($xmlArray)
     {
+        // dd($xmlArray);
         $xmlTotal = XmlTotal::firstOrCreate([
             'v_prod' => $xmlArray['NFe']['infNFe']['total']['ICMSTot']['vProd'],
             'v_ipi' => $xmlArray['NFe']['infNFe']['total']['ICMSTot']['vIPI'],
@@ -192,8 +193,15 @@ class XmlService
 
     public function saveXmlTransp($xmlArray)
     {
+        if(isset($xmlArray['NFe']['infNFe']['transp']['transporta'])) {
+            $nome_transp = $xmlArray['NFe']['infNFe']['transp']['transporta']['xNome'];
+        } else {
+            $nome_transp = 'Não informado';
+        }
+
+
         $xmlTransp = XmlTransp::firstOrCreate([
-            'nome' => $xmlArray['NFe']['infNFe']['transp']['transporta']['xNome'],
+            'nome' => $nome_transp,
             'q_vol' => $xmlArray['NFe']['infNFe']['transp']['vol']['qVol'],
             'esp' => $xmlArray['NFe']['infNFe']['transp']['vol']['esp'],
             'peso_liq' => $xmlArray['NFe']['infNFe']['transp']['vol']['pesoL'],
