@@ -126,14 +126,14 @@
                             });
                         }
                     },
-                    error: function(res) {
+                    error: function(err) {
                         Swal.fire({
                             icon: 'error',
                             title: 'Oops...',
-                            text: 'Erro ao localizar o pedido no Suas Vendas!',
+                            text: err.responseJSON.message,
                         }).then((result) => {
-                            $(this).text('Carregar os dados para edição');
-                            console.log(res);
+                            // $(this).text(err.responseJSON.message);
+                            console.log(err.responseJSON.message);
                         });
                     }
                 });

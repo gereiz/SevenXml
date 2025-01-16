@@ -5,6 +5,7 @@ namespace App\Http\Services\PedidoService;
 use Illuminate\Http\Request;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class PedidoService
 {
@@ -79,30 +80,64 @@ class PedidoService
 
 
     public function getProdutos($itens) {
+        // Lógica antiga, remover na proxima versão
+        // $array_produtos = [];
+
+        // foreach ($itens as $key => $item) {
+
+        //     $produto = new Client();
+        //     $response = $produto->request('GET', $this->url . '/Produto'.'/'.$item['peit_prod_id'], [
+        //         'headers' => [
+        //             'Token' => $this->api_key,
+        //             'Content-Type' => 'application/json'
+        //         ]
+        //     ]);
+
+
+        //     $produto = json_decode($response->getBody()->getContents(), true);
+
+
+        //     $array_produtos[] = [
+        //         'codigo' => $produto['prod_id'],
+        //         'nome' => $produto['prod_descricao'],
+        //         'referencia' => $produto['prod_codigo'],
+        //         'item' => $item['peit_id'],
+
+        //     ];
+        // }
+
+        $responses = Http::pool(fn ($pool) =>
+            collect($itens)->map(fn ($item) =>
+                $pool->as($item['peit_prod_id'])->withHeaders([
+                    'Token' => $this->api_key,
+                    'Content-Type' => 'application/json',
+                ])->timeout(60)
+                ->connectTimeout(30)
+                ->get($this->url . '/Produto/' . $item['peit_prod_id'])
+            )
+        );
+
         $array_produtos = [];
 
-
-        foreach ($itens as $key => $item) {
-
-            $produto = new Client();
-            $response = $produto->request('GET', $this->url . '/Produto'.'/'.$item['peit_prod_id'], [
-                'headers' => [
-                    'Token' => $this->api_key,
-                    'Content-Type' => 'application/json'
-                ]
-            ]);
-
-
-            $produto = json_decode($response->getBody()->getContents(), true);
-
-
-            $array_produtos[] = [
-                'codigo' => $produto['prod_id'],
-                'nome' => $produto['prod_descricao'],
-                'referencia' => $produto['prod_codigo'],
-                'item' => $item['peit_id'],
-
-            ];
+        foreach ($responses as $id => $response) {
+            if ($response instanceof \Illuminate\Http\Client\Response) {
+                // Requisição bem-sucedida ou com falha (mas não uma exceção de conexão)
+                if ($response->successful()) {
+                    $produto = $response->json();
+                    $item = collect($itens)->firstWhere('peit_prod_id', $id);
+                    $array_produtos[] = [
+                        'codigo' => $produto['prod_id'],
+                        'nome' => $produto['prod_descricao'],
+                        'referencia' => $produto['prod_codigo'],
+                        'item' => $item['peit_id'],
+                    ];
+                } else {
+                    Log::error("Erro ao buscar produto ID {$id}: {$response->status()}");
+                }
+            } else {
+                // Caso a resposta seja uma exceção (exemplo: timeout ou falha de conexão)
+                Log::error("Exceção ao buscar produto ID {$id}: {$response->getMessage()}");
+            }
         }
         return $array_produtos;
     }
@@ -131,125 +166,92 @@ class PedidoService
     public function atualizaProdutos($request) {
 
         $pedido_sv = $this->getPedido($request['ped_id']);
-
         $produtos = $pedido_sv['produtos'];
 
-        if(count(session('xmlArray')['NFe']['infNFe']['det']) > 3) {
-            $unidade_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['uCom'];
-            $valor_compra = session('xmlArray')['NFe']['infNFe']['det'][0]['prod']['vUnCom'];
-        } else {
-            $unidade_compra = session('xmlArray')['NFe']['infNFe']['det']['prod']['uCom'];
-            $valor_compra = session('xmlArray')['NFe']['infNFe']['det']['prod']['vUnCom'];
+        $xml_produtos = session('xmlArray')['NFe']['infNFe']['det'];
+        if (!isset($xml_produtos[0])) {
+            $xml_produtos = [$xml_produtos];
         }
 
-
-
-        $xml_produtos = (session('xmlArray')['NFe']['infNFe']['det']);
-
-
-        // Pega o fator multiplicador no campo de obs
-        $fator_mult = substr($request->obs, -4);
-        // remove letras e espaços do fator multiplicador
-        $fator_mult = intval(preg_replace('/[a-zA-Z]/', '', $fator_mult));
-
-        $client = new Client();
-
-        // separa o nome dos produtos e o código
+        // Pega o fator multiplicador no campo de observação
+        $fator_mult = intval(preg_replace('/[a-zA-Z]/', '', substr($request->obs, -4)));
         $produtos_xml = $request->xml_produtos;
-        $body = [];
-
-        // Inicializa o array de referências fora do loop externo
         $lista_referencias = [];
 
-        // Verifica se o código do produto do XML é igual ao código do produto do pedido
-        foreach($produtos_xml as $produto) {
-            $ref_produto = $produto['xml_prod_cod'];
+        $requests = [];
 
-            // Adiciona a referência do produto do XML ao array de referências
+        // Construção das requisições com base no XML
+        foreach ($produtos_xml as $produto) {
+            $ref_produto = $produto['xml_prod_cod'];
             $lista_referencias[] = $ref_produto;
 
-            // Percorre o array de produtos do pedido e verifica se o código do produto do XML é igual ao código do produto do pedido
-            foreach($produtos as $prod) {
-                if($ref_produto == $prod['referencia']) {
+            foreach ($produtos as $prod) {
+                if ($ref_produto == $prod['referencia']) {
+                    $vlr_produto = null;
 
-                    if(count($xml_produtos) > 3) {
-                        foreach($xml_produtos as $xml_produto) {
-                            if($xml_produto['prod']['cProd'] == $ref_produto) {
-                                $unidade_compra = $xml_produto['prod']['uCom'];
-                                $valor_compra = $xml_produto['prod']['vUnCom'];
+                    foreach ($xml_produtos as $xml_produto) {
+                        if ($xml_produto['prod']['cProd'] == $ref_produto) {
+                            $unidade_compra = $xml_produto['prod']['uCom'];
+                            $valor_compra = $xml_produto['prod']['vUnCom'];
 
-
-
-                                if(strlen($unidade_compra) > 2) {
-                                    $unidade_compra = substr($unidade_compra, 2);
-                                    $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
-                                } else {
-                                    $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
-                                    $vlr_produto = substr($vlr_produto, 3);
-                                }
+                            if (strlen($unidade_compra) > 2) {
+                                $unidade_compra = substr($unidade_compra, 2);
+                                $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
+                            } else {
+                                $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
+                                $vlr_produto = substr($vlr_produto, 3);
                             }
+                            break;
                         }
-
-                    } else {
-                        $primeira_execucao = true; // Variável de controle para a primeira execução
-
-                        foreach($xml_produtos as $xml_produto) {
-                            if ($primeira_execucao) {
-                                $primeira_execucao = false; // Define como falso após a primeira execução
-                                continue; // Pula a iteração atual
-                            }
-
-                            if ($xml_produto['cProd'] == $ref_produto) {
-                                $unidade_compra = $xml_produto['uCom'];
-                                $valor_compra = $xml_produto['vUnCom'];
-
-                                if (strlen($unidade_compra) > 2) {
-                                    $unidade_compra = substr($unidade_compra, 2);
-                                    $vlr_produto = ($valor_compra / $unidade_compra) * $fator_mult;
-                                } else {
-                                    $vlr_produto = str_replace(',', '.', $produto['xml_prod_vlr']);
-                                    $vlr_produto = substr($vlr_produto, 3);
-                                }
-                            }
-                            break; // Encerra o loop após a primeira exec
-                        }
-
                     }
 
-                    // Transforma o IPI do produto do XML em float, caso exista
-                    if(isset($produto['xml_prod_ipi'])) {
+                    // dd($vlr_produto, $fator_mult, $unidade_compra);
+
+                    if (isset($produto['xml_prod_ipi'])) {
                         $ipi_produto = str_replace(',', '.', $produto['xml_prod_ipi']);
                         $ipi_produto = substr($ipi_produto, 3);
                     }
 
-                    // Atualiza o preço do produto no pedido
-                    $response = HTTP::withHeaders([
-                        'Token' => $this->api_key,
-                        'Content-Type' => 'application/json'
-                    ])->put($this->url . '/PedidoItem'.'/'. $prod['item'], [ // Atualiza a quantidade do item
-                        "peit_preco" => floatval($vlr_produto),
-                        "peit_qtde" => intval($produto['xml_prod_qtde']),
-                        // "peit_ipi" => floatval($ipi_produto)
-                    ]);
+                    $requests[] = [
+                        'url' => $this->url . '/PedidoItem/' . $prod['item'],
+                        'data' => [
+                            "peit_preco" => floatval($vlr_produto),
+                            "peit_qtde_faturada" => intval($produto['xml_prod_qtde']),
+                            // "peit_ipi" => floatval($ipi_produto),
+                        ],
+                    ];
                 }
             }
         }
 
-        // Após processar todos os produtos XML, verifica produtos do pedido que não têm referência no XML
-        foreach($produtos as $prod) {
-            if(!in_array($prod['referencia'], $lista_referencias)) {
-                // Zera o valor do produto
-                $response = HTTP::withHeaders([
-                    'Token' => $this->api_key,
-                    'Content-Type' => 'application/json'
-                ])->put($this->url . '/PedidoItem'.'/'. $prod['item'], [
-                    "peit_preco" => 0,
-                    // "peit_qtde" => intval($produto['xml_prod_qtde']),
-                    // "peit_ipi" => floatval($ipi_produto)
-                ]);
+        // Adicionar requisições para zerar produtos não encontrados no XML
+        foreach ($produtos as $prod) {
+            if (!in_array($prod['referencia'], $lista_referencias)) {
+                $requests[] = [
+                    'url' => $this->url . '/PedidoItem/' . $prod['item'],
+                    'data' => [
+                        "peit_preco" => 0,
+                    ],
+                ];
             }
         }
 
+        // Envio das requisições em paralelo usando Http::pool
+        $responses = Http::pool(fn ($pool) =>
+            collect($requests)->map(fn ($req) =>
+                $pool->as($req['url'])->withHeaders([
+                    'Token' => $this->api_key,
+                    'Content-Type' => 'application/json',
+                ])->put($req['url'], $req['data'])
+            )
+        );
+
+        // Processar respostas para log de erros
+        foreach ($responses as $url => $response) {
+            if (!$response->successful()) {
+                Log::error("Erro ao atualizar item via API: {$url}, Status: {$response->status()}, Body: {$response->body()}");
+            }
+        }
 
         return ('Itens do Pedido atualizado com sucesso!');
 
@@ -258,154 +260,105 @@ class PedidoService
 
     public function atualizaPedComissao($request) {
 
-        // Pega o fator multiplicador no campo de obs
+        // Extrai o fator multiplicador
         $fator_mult = substr($request->obs, -4);
-        // remove letras e espaços do fator multiplicador
         $fator_mult = intval(preg_replace('/[a-zA-Z]/', '', $fator_mult));
 
-
         // Recupera as comissões do pedido
-        $comissoes_sv = HTTP::withHeaders([
+        $comissoes_sv = Http::withHeaders([
             'Token' => $this->api_key,
-            'Content-Type' => 'application/json'
+            'Content-Type' => 'application/json',
         ])
-        ->get($this->url . '/PedidoComissao'.'/?pefa_pedi_id='.$request->ped_id)
+        ->get($this->url . '/PedidoComissao?pefa_pedi_id=' . $request->ped_id)
         ->json();
 
+        // Apaga as comissões existentes utilizando pool
+        Http::pool(fn ($pool) =>
+            collect($comissoes_sv)->map(fn ($comissao) =>
+                $pool->delete($this->url . '/PedidoComissao/' . $comissao['pefa_id'])
+            )
+        );
 
-        // apaga as comissões do pedido
-        foreach($comissoes_sv as $key => $comissao) {
-            $response = HTTP::withHeaders([
-                'Token' => $this->api_key,
-                'Content-Type' => 'application/json'
-            ])->delete($this->url . '/PedidoComissao'.'/'.$comissao['pefa_id']);
-        }
-
-        // pega o ultimo item do array $request['xml_total']
+        // Processa o valor da nota fiscal
         $vlr_nf = array_key_last($request['xml_total']);
         $data_fatura = session('xmlArray')['NFe']['infNFe']['ide']['dhEmi'];
 
-
-        // transforma o valor previsto em float
         $valor_previsto = str_replace(',', '.', strval($request['xml_total'][$vlr_nf]['xml_vlr_nf']));
-        // remove o R$ do valor previsto
-        $valor_previsto = substr($valor_previsto, 3);
-        // remove os pontos do valor previsto
-        $valor_previsto = str_replace('.', '', $valor_previsto);
-        // adiciona o ponto nos dois últimos digitos do valor previsto
-        $valor_previsto = substr_replace($valor_previsto, '.', -2, 0);
+        $valor_previsto = substr(str_replace('.', '', substr($valor_previsto, 3)), 0, -2) . '.' . substr($valor_previsto, -2);
 
-        $valor_faturado = (intval($valor_previsto) / count($request->xml_duplicatas));
+        $valor_faturado = (floatval($valor_previsto) / count($request->xml_duplicatas));
 
-
-        //Se tiver IPI, formata o valor do IPI
-        if($request['xml_total'][$vlr_nf]['xml_ipi_total']) {
-
-            // transforma o ipi previsto em float
+        // Se tiver IPI, ajusta o valor previsto
+        if (!empty($request['xml_total'][$vlr_nf]['xml_ipi_total'])) {
             $ipi_previsto = str_replace(',', '.', strval($request['xml_total'][$vlr_nf]['xml_ipi_total']));
-            // remove o R$ do ipi previsto
-            // $ipi_previsto = substr($ipi_previsto, 3);
-            // remove os pontos do ipi previsto
-            $ipi_previsto = str_replace('.', '', $ipi_previsto);
-            // adiciona o ponto nos dois últimos digitos do ipi previsto
-            $ipi_previsto = substr_replace($ipi_previsto, '.', -2, 0);
-
-            // soma o valor previsto com o ipi previsto
-            $valor_previsto = $valor_previsto + $ipi_previsto;
-
+            $ipi_previsto = substr(str_replace('.', '', $ipi_previsto), 0, -2) . '.' . substr($ipi_previsto, -2);
+            $valor_previsto += floatval($ipi_previsto);
         }
 
-        // divide o valor previsto pelo número de duplicatas
-        $valor_previsto = (intval($valor_previsto) / count($request->xml_duplicatas));
-        //arredonda o valor previsto para duas casas decimais
-        $valor_previsto = round($valor_previsto, 2);
-
+        $valor_previsto = round($valor_previsto / count($request->xml_duplicatas), 2);
         $valor_total_produtos = $valor_previsto;
-
         $numero_nf = session('xmlArray')['NFe']['infNFe']['ide']['nNF'];
 
-
-        // recuperar as duplicatas do xml
+        // Recupera as duplicatas do XML
         $duplicatas_xml = $request->xml_duplicatas;
 
-
-        // percorre as duplicatas do xml
-        foreach($duplicatas_xml as $key => $duplicata) {
-
-            // separa em dia mês e ano a data da duplicata do xml
+        // Processa duplicatas utilizando pool
+        $requests = collect($duplicatas_xml)->flatMap(function ($duplicata) use (
+            $fator_mult, $valor_faturado, $valor_total_produtos, $data_fatura, $numero_nf, $request
+        ) {
             $data_dup = explode('/', $duplicata['xml_dup_venc']);
-            // inverte a data da duplicata do xml
-            $data_dup = $data_dup[2].'-'.$data_dup[1].'-'.$data_dup[0];
-            // transforma em datetime no formato 2019-07-01T00:00:00
-            $data_liquidez = date('Y-m-d', strtotime($data_dup)).'T00:00:00';
+            $data_dup = $data_dup[2] . '-' . $data_dup[1] . '-' . $data_dup[0] . 'T00:00:00';
 
-
-            // separa as datas da condição de pagamento do campo session('pedido')['pedi_condicao'] separadas por /
             $datas_condicao = explode('/', session('pedido')['pedi_condicao']);
-
-            //  pega somente os dois primeiros digitos do ultimo item do array
-            $data_final = substr($datas_condicao[count($datas_condicao) - 1], 0, 2);
-
-            // remove o ultimo item do array e adiciona o item com os dois primeiros digitos
+            $data_final = substr(end($datas_condicao), 0, 2);
             array_pop($datas_condicao);
-            array_push($datas_condicao, $data_final);
+            $datas_condicao[] = $data_final;
 
-            if($fator_mult <= 2) {
+            $requests = [];
+            if ($fator_mult <= 2) {
                 $fator = 1;
-                $valor_faturado = $valor_faturado*0.7;
-                $valor_total_produtos = $valor_total_produtos*0.7;
+                $valor_faturado *= 0.7;
+                $valor_total_produtos *= 0.7;
 
-               // adiciona duplicatas multiplidas pelo fator multiplicador
-                for($i = 0; $i < $fator_mult; $i++) {
+                for ($i = 0; $i < $fator_mult; $i++) {
+                    $data_liquidez = date('Y-m-d', strtotime($data_dup . ' + ' . $datas_condicao[$i] . ' days')) . 'T00:00:00';
 
-                    // soma a quantidade de dias da condição de pagamento com a data da duplicata
-                    $data_liquidez = date('Y-m-d', strtotime($data_liquidez. ' + '.$datas_condicao[$i].' days')).'T00:00:00';
-
-
-                    $response = HTTP::withHeaders([
-                        'Token' => $this->api_key,
-                        'Content-Type' => 'application/json'
-                    ])->post($this->url . '/PedidoComissao', [
+                    $requests[] = [
                         "pefa_pedi_id" => $request->ped_id,
                         "pefa_valor" => $valor_faturado,
                         "pefa_valor_recebido" => $valor_total_produtos,
-                        "pefa_data" => $data_dup,
+                        "pefa_data" => $data_liquidez,
                         "pefa_data_agrupamento" => $data_fatura,
                         "pefa_nota_fiscal" => $numero_nf,
-                        "pefa_status" => "NC"
-
-                    ]);
+                        "pefa_status" => "NC",
+                    ];
                 }
-
             } else {
                 $fator = 2;
+                for ($i = 1; $i <= $fator; $i++) {
+                    $data_liquidez = date('Y-m-d', strtotime($data_dup . ' + ' . ($datas_condicao[$i] + 30) . ' days')) . 'T00:00:00';
 
-                for($i = 1; $i <= $fator; $i++) {
-
-                    // soma a quantidade de dias da condição de pagamento com a data da duplicata
-                    $data_liquidez = date('Y-m-d', strtotime($data_liquidez. ' + '.$datas_condicao[$i] + 30 .'days')).'T00:00:00';
-
-
-                    $response = HTTP::withHeaders([
-                        'Token' => $this->api_key,
-                        'Content-Type' => 'application/json'
-                    ])->post($this->url . '/PedidoComissao', [
+                    $requests[] = [
                         "pefa_pedi_id" => $request->ped_id,
                         "pefa_valor" => $valor_faturado * $i,
                         "pefa_valor_recebido" => $valor_total_produtos,
-                        "pefa_data" => date('Y-m-d', strtotime($data_dup. '+ 30 days ')).'T00:00:00',
+                        "pefa_data" => $data_liquidez,
                         "pefa_data_agrupamento" => $data_fatura,
                         "pefa_nota_fiscal" => $numero_nf,
-                        "pefa_status" => "NC"
-
-                    ]);
+                        "pefa_status" => "NC",
+                    ];
                 }
             }
+            dd($requests);
+            return $requests;
+        });
 
-
-
-
-        }
+        // Realiza as requisições em pool para criar as duplicatas
+        Http::pool(fn ($pool) =>
+            collect($requests)->map(fn ($data) =>
+                $pool->post($this->url . '/PedidoComissao', $data)
+            )
+        );
         return 'Dados atualizados com sucesso!';
     }
 
