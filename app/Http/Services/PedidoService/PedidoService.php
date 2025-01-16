@@ -349,7 +349,6 @@ class PedidoService
                     ];
                 }
             }
-            dd($requests);
             return $requests;
         });
 
